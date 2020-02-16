@@ -36,7 +36,7 @@
 ;; - Renders EPUB2 (.ncx) and EPUB3 (<nav>) TOCs
 ;; - Hyperlinks to internal and external targets
 ;; - Supports textual and image documents
-;; - Info-style History navigation
+;; - Info-style history navigation
 ;; - View source of document files
 ;; - Metadata display
 ;; - Image rescaling
@@ -816,14 +816,13 @@ Saving is only done if `nov-save-place-file' is set."
     (error "Invalid nov.el link")))
 
 (defun nov-org-link-store ()
-  (when (not (and (eq major-mode 'nov-mode) nov-file-name))
-    (error "Not in a nov.el buffer"))
-  (when (not (integerp nov-documents-index))
-    (setq nov-documents-index 0))
-  (org-store-link-props
-   :type "nov"
-   :link (format "nov:%s::%d:%d" nov-file-name nov-documents-index (point))
-   :description (format "EPUB file at %s" nov-file-name)))
+  (when (and (eq major-mode 'nov-mode) nov-file-name)
+    (when (not (integerp nov-documents-index))
+      (setq nov-documents-index 0))
+    (org-store-link-props
+     :type "nov"
+     :link (format "nov:%s::%d:%d" nov-file-name nov-documents-index (point))
+     :description (format "EPUB file at %s" nov-file-name))))
 
 (org-link-set-parameters
  "nov"
