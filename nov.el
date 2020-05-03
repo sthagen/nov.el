@@ -4,7 +4,7 @@
 
 ;; Author: Vasilij Schneidermann <mail@vasilij.de>
 ;; URL: https://github.com/wasamasa/nov.el
-;; Version: 0.2.9
+;; Version: 0.3.0
 ;; Package-Requires: ((dash "2.12.0") (esxml "0.3.3") (emacs "24.4"))
 ;; Keywords: hypermedia, multimedia, epub
 
@@ -648,21 +648,23 @@ the HTML is rendered with `nov-render-html-function'."
 
 (defun nov-visit-relative-file (filename target)
   "Visit the document as specified by FILENAME and TARGET."
-  (let* ((current-path (cdr (aref nov-documents nov-documents-index)))
-         (directory (file-name-directory current-path))
-         (path (file-truename (nov-make-path directory filename)))
-         (index (nov-find-document
-                 (lambda (doc) (equal path (file-truename (cdr doc)))))))
-    (when (not index)
-      (error "Couldn't locate document"))
-    (let ((shr-target-id target))
-      (nov-goto-document index))
-    (when target
-      (let ((pos (next-single-property-change (point-min) 'shr-target-id)))
-        (when (not pos)
-          (error "Couldn't locate target"))
-        (goto-char pos)
-        (recenter (1- (max 1 scroll-margin)))))))
+  (when (not (zerop (length filename)))
+    (let* ((current-path (cdr (aref nov-documents nov-documents-index)))
+           (directory (file-name-directory current-path))
+           (path (file-truename (nov-make-path directory filename)))
+           (index (nov-find-document
+                   (lambda (doc) (equal path (file-truename (cdr doc)))))))
+      (when (not index)
+        (error "Couldn't locate document"))
+      (setq nov-documents-index index)))
+  (let ((shr-target-id target))
+    (nov-goto-document nov-documents-index))
+  (when target
+    (let ((pos (next-single-property-change (point-min) 'shr-target-id)))
+      (when (not pos)
+        (error "Couldn't locate target"))
+      (goto-char pos)
+      (recenter (1- (max 1 scroll-margin))))))
 
 ;; adapted from `shr-browse-url'
 (defun nov-browse-url (&optional mouse-event)
