@@ -48,9 +48,11 @@
 (require 'esxml-query)
 (require 'shr)
 (require 'url-parse)
-(require 'recentf)
+
 (require 'bookmark)
+(require 'imenu)
 (require 'org)
+(require 'recentf)
 
 (when (not (fboundp 'libxml-parse-xml-region))
   (message "Your Emacs wasn't compiled with libxml support"))
@@ -347,14 +349,14 @@ Each alist item consists of the identifier and full path."
         (nov--content-epub2-files content manifest files)
       (nov--content-epub3-files content manifest files))))
 
-(defun nov--walk-ncx-node (node depth)
+(defun nov--walk-ncx-node (node)
   (let ((tag (esxml-node-tag node))
         (children (--filter (eq (esxml-node-tag it) 'navPoint)
                             (esxml-node-children node))))
     (cond
      ((eq tag 'navMap)
       (insert "<ol>\n")
-      (mapc (lambda (node) (nov--walk-ncx-node node (1+ depth))) children)
+      (mapc (lambda (node) (nov--walk-ncx-node node)) children)
       (insert "</ol>\n"))
      ((eq tag 'navPoint)
       (let* ((label-node (esxml-query "navLabel>text" node))
@@ -367,7 +369,7 @@ Each alist item consists of the identifier and full path."
           (if children
               (progn
                 (insert (format "<li>\n%s\n<ol>\n" link))
-                (mapc (lambda (node) (nov--walk-ncx-node node (1+ depth)))
+                (mapc (lambda (node) (nov--walk-ncx-node node))
                       children)
                 (insert (format "</ol>\n</li>\n")))
             (insert (format "<li>\n%s\n</li>\n" link)))))))))
@@ -376,7 +378,7 @@ Each alist item consists of the identifier and full path."
   "Convert NCX document at PATH to HTML."
   (let ((root (esxml-query "navMap" (nov-slurp path t))))
     (with-temp-buffer
-      (nov--walk-ncx-node root 0)
+      (nov--walk-ncx-node root)
       (buffer-string))))
 
 
@@ -446,17 +448,15 @@ This function honors `shr-max-image-proportion' if possible."
    ;; TODO: add native resizing support once it's official
    ((fboundp 'imagemagick-types)
     ;; adapted from `shr-rescale-image'
-    (let ((edges (window-inside-pixel-edges
-                  (get-buffer-window (current-buffer)))))
+    (-let [(x1 y1 x2 y2) (window-inside-pixel-edges
+                          (get-buffer-window (current-buffer)))]
       (insert-image
        (create-image path 'imagemagick nil
                      :ascent 100
                      :max-width (truncate (* shr-max-image-proportion
-                                             (- (nth 2 edges)
-                                                (nth 0 edges))))
+                                             (- x2 x1)))
                      :max-height (truncate (* shr-max-image-proportion
-                                              (- (nth 3 edges)
-                                                 (nth 1 edges))))))))
+                                              (- y2 y1)))))))
    (t
     ;; `create-image' errors out for unsupported image types
     (let ((image (ignore-errors (create-image path nil nil :ascent 100))))
@@ -524,15 +524,13 @@ If the document path refers to an image (as determined by
 `image-type-file-name-regexps'), an image is inserted, otherwise
 the HTML is rendered with `nov-render-html-function'."
   (interactive)
-  (let* ((document (aref nov-documents nov-documents-index))
-         (id (car document))
-         (path (cdr document))
-         ;; HACK: this should be looked up in the manifest
-         (imagep (--find (string-match-p (car it) path)
-                         image-type-file-name-regexps))
-         ;; NOTE: allows resolving image references correctly
-         (default-directory (file-name-directory path))
-         buffer-read-only)
+  (-let* (((id . path) (aref nov-documents nov-documents-index))
+          ;; HACK: this should be looked up in the manifest
+          (imagep (--find (string-match-p (car it) path)
+                          image-type-file-name-regexps))
+          ;; NOTE: allows resolving image references correctly
+          (default-directory (file-name-directory path))
+          (buffer-read-only nil))
     (erase-buffer)
 
     (cond
@@ -722,11 +720,10 @@ Saving is only done if `nov-save-place-file' is set."
   (interactive)
   (or nov-history
       (user-error "This is the first document you looked at"))
-  (let ((history-forward
-         (cons (list nov-documents-index (point))
-               nov-history-forward))
-        (index (car (car nov-history)))
-        (opoint (cadr (car nov-history))))
+  (-let ((history-forward
+          (cons (list nov-documents-index (point))
+                nov-history-forward))
+         ((index opoint) (car nov-history)))
     (setq nov-history (cdr nov-history))
     (nov-goto-document index)
     (setq nov-history (cdr nov-history))
@@ -738,9 +735,8 @@ Saving is only done if `nov-save-place-file' is set."
   (interactive)
   (or nov-history-forward
       (user-error "This is the last document you looked at"))
-  (let ((history-forward (cdr nov-history-forward))
-        (index (car (car nov-history-forward)))
-        (opoint (cadr (car nov-history-forward))))
+  (-let ((history-forward (cdr nov-history-forward))
+         ((index opoint) (car nov-history-forward)))
     (nov-goto-document index)
     (setq nov-history-forward history-forward)
     (goto-char opoint)))
@@ -797,6 +793,7 @@ Saving is only done if `nov-save-place-file' is set."
 ;;; recentf interop
 
 (defun nov-add-to-recentf ()
+  "Add real path to recentf list if possible."
   (when nov-file-name
     (recentf-add-file nov-file-name)))
 
@@ -816,7 +813,7 @@ Saving is only done if `nov-save-place-file' is set."
   (nov-render-document)
   (goto-char point))
 
-;; Bookmark Integration
+;; Bookmark interop
 (defun nov-bookmark-make-record  ()
   "Create a bookmark epub record."
   (cons (buffer-name)
@@ -835,9 +832,10 @@ See also `nov-bookmark-make-record'."
     (nov--find-file file index position)))
 
 
-;;; org interop
+;;; Org interop
 
 (defun nov-org-link-follow (path)
+  "Follow nov: link designated by PATH."
   (if (string-match "^\\(.*\\)::\\([0-9]+\\):\\([0-9]+\\)$" path)
       (let ((file (match-string 1 path))
             (index (string-to-number (match-string 2 path)))
@@ -846,6 +844,7 @@ See also `nov-bookmark-make-record'."
     (error "Invalid nov.el link")))
 
 (defun nov-org-link-store ()
+  "Store current EPUB location as nov: link."
   (when (and (eq major-mode 'nov-mode) nov-file-name)
     (when (not (integerp nov-documents-index))
       (setq nov-documents-index 0))
@@ -858,6 +857,36 @@ See also `nov-bookmark-make-record'."
  "nov"
  :follow 'nov-org-link-follow
  :store 'nov-org-link-store)
+
+
+;;; Imenu interop
+
+(defun nov-imenu-goto-function (_name filename target)
+  "Visit imenu item using FILENAME and TARGET."
+  (nov-visit-relative-file filename target))
+
+(defun nov-imenu-create-index ()
+  "Generate Imenu index."
+  (require 'esxml)
+  (let* ((toc-path (cdr (aref nov-documents 0)))
+         (ncxp (version< nov-epub-version "3.0"))
+         (toc (with-temp-buffer
+                (if ncxp
+                    (insert (nov-ncx-to-html toc-path))
+                  (insert-file-contents toc-path))
+                (libxml-parse-html-region (point-min) (point-max)))))
+    (mapcar
+     (lambda (node)
+       (-let* ((href (esxml-node-attribute 'href node))
+               (label (mapconcat 'string-trim-whitespace
+                                 (esxml-find-descendants #'stringp node) " "))
+               ((filename target) (nov-url-filename-and-target href)))
+         (list label filename 'nov-imenu-goto-function target)))
+     (esxml-query-all "a" toc))))
+
+(defun nov-imenu-setup ()
+  (setq imenu-create-index-function 'nov-imenu-create-index))
+(add-hook 'nov-mode-hook 'nov-imenu-setup)
 
 (provide 'nov)
 ;;; nov.el ends here
